@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Sudoku</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Style for the grid lines */
+        .sudoku-grid input:nth-child(3n) {
+            border-right-width: 3px;
+        }
+        .sudoku-grid input:nth-child(n+19):nth-child(-n+27),
+        .sudoku-grid input:nth-child(n+46):nth-child(-n+54) {
+            border-bottom-width: 3px;
+        }
+        /* Style for pre-filled puzzle numbers */
+        .pre-filled {
+            color: #d1d5db; /* A light gray */
+            pointer-events: none;
+        }
+        /* Style for user-entered numbers */
+        .user-input {
+            color: #60a5fa; /* A bright blue */
+        }
+        /* Style for incorrect numbers */
+        .incorrect {
+            background-color: #ef4444 !important; /* Red */
+            color: #ffffff !important;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-md mx-auto text-center">
+        <h1 class="text-4xl font-bold mb-2">Sudoku</h1>
+        <p class="text-gray-400 mb-6">A new puzzle is generated each time. Good luck!</p>
+
+        <!-- The 9x9 Sudoku grid will be generated here -->
+        <div id="sudoku-grid" class="grid grid-cols-9 gap-1 bg-gray-700 p-2 rounded-lg shadow-lg mb-6 border-4 border-gray-600">
+        </div>
+
+        <!-- Action buttons for the user -->
+        <div class="flex items-center justify-center space-x-4 mb-4">
+            <button id="check-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                Check Progress
+            </button>
+            <button id="solve-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                Give Up & Solve
+            </button>
+            <button id="new-game-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                New Game
+            </button>
+        </div>
+        
+        <!-- Message area for feedback -->
+        <div id="message-box" class="h-8 text-lg font-semibold text-yellow-400"></div>
+        
+        <!-- Step-by-step solution display -->
+        <div id="solution-steps" class="hidden mt-6 max-w-2xl mx-auto">
+            <h3 class="text-2xl font-bold text-center mb-4 text-green-400">Step-by-Step Solution</h3>
+            <div class="bg-gray-800 rounded-lg p-4 max-h-96 overflow-y-auto">
+                <div id="steps-container" class="space-y-3"></div>
+                <div class="text-center mt-4">
+                    <button id="next-step-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105">
+                        Show Next Step
+                    </button>
+                    <button id="show-all-steps-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 ml-2">
+                        Show All Steps
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const GRID_SIZE = 9;
+        const BOX_SIZE = 3;
+        const DIFFICULTY = 40; // Number of cells to remove. Higher is harder.
+
+        const gridElement = document.getElementById('sudoku-grid');
+        const checkBtn = document.getElementById('check-btn');
+        const solveBtn = document.getElementById('solve-btn');
+        const newGameBtn = document.getElementById('new-game-btn');
+        const messageBox = document.getElementById('message-box');
+        const solutionStepsDiv = document.getElementById('solution-steps');
+        const stepsContainer = document.getElementById('steps-container');
+        const nextStepBtn = document.getElementById('next-step-btn');
+        const showAllStepsBtn = document.getElementById('show-all-steps-btn');
+
+        let currentBoard = [];
+        let solutionBoard = [];
+        let solutionSteps = [];
+        let currentStepIndex = 0;
+
+        // --- Core Sudoku Logic (ported from Python to JavaScript) ---
+
+        /**
+         * Shuffles an array in place.
+         * @param {Array} array The array to shuffle.
+         * @returns {Array} The shuffled array.
+         */
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        /**
+         * Finds the first empty cell (represented by 0).
+         * @param {number[][]} board The Sudoku board.
+         * @returns {[number, number]|null} The [row, col] of the empty cell, or null if none.
+         */
+        function findEmpty(board) {
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    if (board[r][c] === 0) {
+                        return [r, c];
+                    }
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Checks if a number is valid in a given position.
+         * @param {number[][]} board The board.
+         * @param {number} num The number to check.
+         * @param {number} row The row index.
+         * @param {number} col The column index.
+         * @returns {boolean} True if valid, false otherwise.
+         */
+        function isValid(board, num, row, col) {
+            // Check row
+            if (board[row].includes(num)) return false;
+
+            // Check column
+            for (let r = 0; r < GRID_SIZE; r++) {
+                if (board[r][col] === num) return false;
+            }
+
+            // Check 3x3 box
+            const boxRowStart = Math.floor(row / BOX_SIZE) * BOX_SIZE;
+            const boxColStart = Math.floor(col / BOX_SIZE) * BOX_SIZE;
+            for (let r = boxRowStart; r < boxRowStart + BOX_SIZE; r++) {
+                for (let c = boxColStart; c < boxColStart + BOX_SIZE; c++) {
+                    if (board[r][c] === num) return false;
+                }
+            }
+
+            return true;
+        }
+
+        /**
+         * Solves a Sudoku board using backtracking and records steps.
+         * @param {number[][]} board The board to solve.
+         * @param {Array} steps Array to record solving steps.
+         * @returns {boolean} True if solved, false otherwise.
+         */
+        function solveSudokuWithSteps(board, steps = []) {
+            const find = findEmpty(board);
+            if (!find) {
+                return true; // Puzzle is solved
+            }
+            const [row, col] = find;
+            
+            for (let num = 1; num <= 9; num++) {
+                if (isValid(board, num, row, col)) {
+                    board[row][col] = num;
+                    
+                    // Record this step with reasoning
+                    const reasoning = generateReasoning(board, num, row, col);
+                    steps.push({
+                        row: row,
+                        col: col,
+                        number: num,
+                        reasoning: reasoning,
+                        boardState: board.map(row => [...row]) // Deep copy of current state
+                    });
+                    
+                    if (solveSudokuWithSteps(board, steps)) {
+                        return true;
+                    }
+                    
+                    board[row][col] = 0; // Backtrack
+                    // Record backtrack step
+                    steps.push({
+                        row: row,
+                        col: col,
+                        number: 0,
+                        reasoning: `Backtracking: ${num} at (${row + 1}, ${col + 1}) led to no solution`,
+                        boardState: board.map(row => [...row]),
+                        isBacktrack: true
+                    });
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Generates reasoning for why a number was placed in a specific cell.
+         * @param {number[][]} board The current board state.
+         * @param {number} num The number being placed.
+         * @param {number} row The row index.
+         * @param {number} col The column index.
+         * @returns {string} Human-readable reasoning.
+         */
+        function generateReasoning(board, num, row, col) {
+            const reasons = [];
+            
+            // Check what numbers are already in the row
+            const rowNumbers = board[row].filter(n => n !== 0);
+            const missingInRow = [1,2,3,4,5,6,7,8,9].filter(n => !rowNumbers.includes(n));
+            
+            // Check what numbers are already in the column
+            const colNumbers = [];
+            for (let r = 0; r < GRID_SIZE; r++) {
+                if (board[r][col] !== 0) colNumbers.push(board[r][col]);
+            }
+            const missingInCol = [1,2,3,4,5,6,7,8,9].filter(n => !colNumbers.includes(n));
+            
+            // Check what numbers are already in the 3x3 box
+            const boxNumbers = [];
+            const boxRowStart = Math.floor(row / BOX_SIZE) * BOX_SIZE;
+            const boxColStart = Math.floor(col / BOX_SIZE) * BOX_SIZE;
+            for (let r = boxRowStart; r < boxRowStart + BOX_SIZE; r++) {
+                for (let c = boxColStart; c < boxColStart + BOX_SIZE; c++) {
+                    if (board[r][c] !== 0) boxNumbers.push(board[r][c]);
+                }
+            }
+            const missingInBox = [1,2,3,4,5,6,7,8,9].filter(n => !boxNumbers.includes(n));
+            
+            // Generate reasoning
+            if (missingInRow.length === 1 && missingInRow[0] === num) {
+                reasons.push(`Only missing number in row ${row + 1}`);
+            }
+            if (missingInCol.length === 1 && missingInCol[0] === num) {
+                reasons.push(`Only missing number in column ${col + 1}`);
+            }
+            if (missingInBox.length === 1 && missingInBox[0] === num) {
+                reasons.push(`Only missing number in 3×3 box`);
+            }
+            
+            if (reasons.length === 0) {
+                // Find constraints
+                const constraints = [];
+                if (missingInRow.length <= 3) constraints.push(`${missingInRow.length} options left in row`);
+                if (missingInCol.length <= 3) constraints.push(`${missingInCol.length} options left in column`);
+                if (missingInBox.length <= 3) constraints.push(`${missingInBox.length} options left in box`);
+                
+                if (constraints.length > 0) {
+                    reasons.push(`Best choice: ${constraints.join(', ')}`);
+                } else {
+                    reasons.push('Trying systematic approach');
+                }
+            }
+            
+            return `Place ${num} at row ${row + 1}, column ${col + 1}: ${reasons.join(' and ')}`;
+        }
+
+        /**
+         * Displays a specific step in the solution process.
+         * @param {number} stepIndex The index of the step to display.
+         */
+        function displayStep(stepIndex) {
+            if (stepIndex >= solutionSteps.length) return;
+            
+            const step = solutionSteps[stepIndex];
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `step-item p-3 rounded-lg ${step.isBacktrack ? 'bg-red-900 border-l-4 border-red-500' : 'bg-green-900 border-l-4 border-green-500'}`;
+            
+            stepDiv.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <div class="flex-1">
+                        <span class="font-bold text-lg ${step.isBacktrack ? 'text-red-300' : 'text-green-300'}">
+                            Step ${stepIndex + 1}:
+                        </span>
+                        <span class="text-gray-300 ml-2">${step.reasoning}</span>
+                    </div>
+                    ${!step.isBacktrack ? `<span class="bg-blue-600 text-white px-2 py-1 rounded-full text-sm font-bold">${step.number}</span>` : ''}
+                </div>
+            `;
+            
+            stepsContainer.appendChild(stepDiv);
+            
+            // Update the board to show this step
+            if (!step.isBacktrack) {
+                const cells = gridElement.querySelectorAll('input');
+                const cellIndex = step.row * 9 + step.col;
+                const cell = cells[cellIndex];
+                if (cell) {
+                    cell.value = step.number;
+                    cell.style.backgroundColor = '#22c55e'; // Green highlight for new moves
+                    cell.style.color = '#ffffff';
+                    
+                    // Remove highlight after a moment
+                    setTimeout(() => {
+                        cell.style.backgroundColor = '#1f2937'; // Back to original
+                        cell.style.color = '#60a5fa'; // User input color
+                    }, 1500);
+                }
+            }
+            
+            // Scroll to the latest step
+            stepDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        /**
+         * Shows the next step in the solution.
+         */
+        function showNextStep() {
+            if (currentStepIndex < solutionSteps.length) {
+                displayStep(currentStepIndex);
+                currentStepIndex++;
+                
+                if (currentStepIndex >= solutionSteps.length) {
+                    nextStepBtn.style.display = 'none';
+                    showAllStepsBtn.style.display = 'none';
+                    messageBox.textContent = 'Solution complete! All steps shown.';
+                }
+            }
+        }
+
+        /**
+         * Shows all remaining steps at once.
+         */
+        function showAllSteps() {
+            while (currentStepIndex < solutionSteps.length) {
+                displayStep(currentStepIndex);
+                currentStepIndex++;
+            }
+            nextStepBtn.style.display = 'none';
+            showAllStepsBtn.style.display = 'none';
+            
+            // Show final solution
+            renderBoard(solutionBoard);
+            messageBox.textContent = 'Complete solution revealed with all steps!';
+        }
+
+        /**
+         * Solves the current puzzle step by step and shows the process.
+         */
+        function solveWithSteps() {
+            // Reset the board to the original puzzle state
+            currentBoard = createPuzzle(solutionBoard, DIFFICULTY);
+            renderBoard(currentBoard);
+            
+            // Solve with step recording
+            solutionSteps = [];
+            const puzzleCopy = currentBoard.map(row => [...row]);
+            solveSudokuWithSteps(puzzleCopy, solutionSteps);
+            
+            // Filter out backtrack steps for cleaner display (optional)
+            solutionSteps = solutionSteps.filter(step => !step.isBacktrack);
+            
+            // Show the solution steps interface
+            solutionStepsDiv.classList.remove('hidden');
+            stepsContainer.innerHTML = '';
+            currentStepIndex = 0;
+            
+            // Reset button states
+            nextStepBtn.style.display = 'inline-block';
+            showAllStepsBtn.style.display = 'inline-block';
+            
+            messageBox.textContent = `Solution found in ${solutionSteps.length} steps! Click "Show Next Step" to see the reasoning.`;
+        }
+        /**
+         * Solves a Sudoku board using backtracking (for generation only).
+         * @param {number[][]} board The board to solve.
+         * @returns {boolean} True if solved, false otherwise.
+         */
+        function solveSudoku(board) {
+            const find = findEmpty(board);
+            if (!find) {
+                return true; // Puzzle is solved
+            }
+            const [row, col] = find;
+            
+            // Try numbers 1-9 in a random order to generate different puzzles
+            const numbers = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+            for (const num of numbers) {
+                if (isValid(board, num, row, col)) {
+                    board[row][col] = num;
+                    if (solveSudoku(board)) {
+                        return true;
+                    }
+                    board[row][col] = 0; // Backtrack
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Generates a new, fully solved Sudoku board.
+         * @returns {number[][]} A complete Sudoku board.
+         */
+        function generateSolvedBoard() {
+            const board = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(0));
+            solveSudoku(board);
+            return board;
+        }
+
+        /**
+         * Creates a puzzle by removing numbers from a solved board.
+         * @param {number[][]} board The solved board.
+         * @param {number} holes The number of cells to make empty.
+         * @returns {number[][]} The puzzle board.
+         */
+        function createPuzzle(board, holes) {
+            const puzzle = board.map(row => [...row]); // Deep copy
+            let attempts = holes;
+            while (attempts > 0) {
+                const row = Math.floor(Math.random() * GRID_SIZE);
+                const col = Math.floor(Math.random() * GRID_SIZE);
+                if (puzzle[row][col] !== 0) {
+                    puzzle[row][col] = 0;
+                    attempts--;
+                }
+            }
+            return puzzle;
+        }
+
+        /**
+         * Renders the Sudoku board on the screen.
+         * @param {number[][]} board The board to render.
+         */
+        function renderBoard(board) {
+            gridElement.innerHTML = '';
+            for (let r = 0; r < GRID_SIZE; r++) {
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    const cell = document.createElement('input');
+                    cell.type = 'number';
+                    cell.min = 1;
+                    cell.max = 9;
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.className = "w-10 h-10 sm:w-12 sm:h-12 text-center text-xl font-bold bg-gray-800 border-2 border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition";
+
+                    // Add thicker borders for 3x3 boxes
+                    if (r === 2 || r === 5) cell.style.borderBottomWidth = '3px';
+                    if (c === 2 || c === 5) cell.style.borderRightWidth = '3px';
+                    if (r === 0) cell.style.borderTopWidth = '3px';
+                    if (c === 0) cell.style.borderLeftWidth = '3px';
+                    if (r === 8) cell.style.borderBottomWidth = '3px';
+                    if (c === 8) cell.style.borderRightWidth = '3px';
+
+
+                    const value = board[r][c];
+                    if (value !== 0) {
+                        cell.value = value;
+                        cell.classList.add('pre-filled');
+                    } else {
+                        cell.classList.add('user-input');
+                        cell.addEventListener('input', handleUserInput);
+                    }
+                    gridElement.appendChild(cell);
+                }
+            }
+        }
+        
+        /**
+         * Handles user input into the cells.
+         * @param {Event} e The input event.
+         */
+        function handleUserInput(e) {
+            const input = e.target;
+            const row = parseInt(input.dataset.row);
+            const col = parseInt(input.dataset.col);
+            let value = parseInt(input.value);
+
+            // Keep only the last digit entered
+            if (input.value.length > 1) {
+                input.value = input.value.slice(-1);
+                value = parseInt(input.value);
+            }
+
+            if (isNaN(value) || value < 1 || value > 9) {
+                currentBoard[row][col] = 0;
+                input.value = '';
+            } else {
+                currentBoard[row][col] = value;
+            }
+            // Remove incorrect styling on new input
+            input.classList.remove('incorrect');
+            messageBox.textContent = '';
+        }
+
+        /**
+         * Checks the user's solution against the correct one and provides feedback.
+         */
+        function checkProgress() {
+            let mistakes = 0;
+            let filledCells = 0;
+            const cells = gridElement.querySelectorAll('input');
+            
+            cells.forEach(cell => {
+                cell.classList.remove('incorrect');
+                const row = parseInt(cell.dataset.row);
+                const col = parseInt(cell.dataset.col);
+                const isUserInput = cell.classList.contains('user-input');
+                
+                if (isUserInput && cell.value !== '') {
+                    filledCells++;
+                    if (parseInt(cell.value) !== solutionBoard[row][col]) {
+                        cell.classList.add('incorrect');
+                        mistakes++;
+                    }
+                }
+            });
+
+            if (mistakes > 0) {
+                messageBox.textContent = `You have ${mistakes} mistake(s). Keep trying!`;
+            } else if(filledCells === 0){
+                 messageBox.textContent = 'Fill in some cells to check your progress!';
+            } 
+            else {
+                const isSolved = currentBoard.every((row, r) => row.every((val, c) => val === solutionBoard[r][c]));
+                if (isSolved) {
+                    messageBox.textContent = 'Congratulations! You solved it!';
+                } else {
+                    messageBox.textContent = 'No mistakes so far. Keep going!';
+                }
+            }
+        }
+
+        /**
+         * Starts a new game by generating and rendering a new puzzle.
+         */
+        function startNewGame() {
+            solutionBoard = generateSolvedBoard();
+            currentBoard = createPuzzle(solutionBoard, DIFFICULTY);
+            renderBoard(currentBoard);
+            messageBox.textContent = '';
+            
+            // Hide solution steps from previous game
+            solutionStepsDiv.classList.add('hidden');
+            stepsContainer.innerHTML = '';
+            solutionSteps = [];
+            currentStepIndex = 0;
+        }
+
+        // --- Event Listeners ---
+        checkBtn.addEventListener('click', checkProgress);
+        solveBtn.addEventListener('click', solveWithSteps);
+        newGameBtn.addEventListener('click', startNewGame);
+        nextStepBtn.addEventListener('click', showNextStep);
+        showAllStepsBtn.addEventListener('click', showAllSteps);
+
+        // --- Initial Load ---
+        document.addEventListener('DOMContentLoaded', startNewGame);
+
+    </script>
+</body>
+</html>
